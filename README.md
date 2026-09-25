@@ -26,7 +26,7 @@ This project demonstrates a complete **Extract → Transform → Load (ETL)** pi
 
 ```
 data-ingestion-pipeline/
-├── freeCodeCamp_etl.ipynb   # Step-by-step ETL notebook (main implementation)
+├── project.ipynb   # Step-by-step ETL notebook (main implementation)
 └── README.md                # Project documentation
 ```
 
@@ -152,7 +152,7 @@ $env:GITHUB_TOKEN = "your_token_here"
 
 ### Running the Notebook
 
-1. Open `freeCodeCamp_etl.ipynb` in Jupyter or Google Colab.
+1. Open `project.ipynb` in Jupyter or Google Colab.
 2. Follow cells sequentially — each section is annotated with explanations.
 3. Configure your PostgreSQL connection string in the `dlt` pipeline cell.
 

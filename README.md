@@ -1,176 +1,113 @@
-# 🚀 Data Ingestion Pipeline — GitHub Events ETL
+# GitHub Events ETL Pipeline
 
-A hands-on Python project that extracts real-time data from the **GitHub REST API**, transforms it, and loads it into a **PostgreSQL** database using **dlt** (Data Load Tool).
-
----
-
-## 📌 Project Overview
-
-This project demonstrates a complete **Extract → Transform → Load (ETL)** pipeline built from scratch. Data is sourced from the GitHub Events API, paginated across multiple pages, and efficiently streamed into a relational database using the `dlt` library.
+Extracts real-time activity data from the **GitHub REST API**, transforms it, and loads it into a local **DuckDB** database — demonstrating a production-grade ETL pattern built from scratch in Python.
 
 ---
 
-## 🛠️ Tech Stack
+## Overview
 
-| Tool          | Purpose                                      |
-|---------------|----------------------------------------------|
-| Python 3      | Core language                                |
-| `requests`    | HTTP client for REST API calls               |
-| `dlt`         | Data load tool for schema inference & loading |
-| PostgreSQL    | Target database                              |
-| Git & GitHub  | Version control + data source (GitHub Events API) |
+| Stage | Description |
+|---|---|
+| **Extract** | Paginated fetch of GitHub repository events with rate-limit handling and Bearer token auth |
+| **Transform** | Flattens nested JSON, parses ISO timestamps, and filters malformed API responses |
+| **Load** | Bulk upsert into DuckDB with automatic schema evolution (new columns added at runtime) |
 
 ---
 
-## 📂 Project Structure
+## Tech Stack
+
+| Tool | Role |
+|---|---|
+| `Python 3.10+` | Core language |
+| `requests` | HTTP client for REST API calls |
+| `duckdb` | Embedded analytical database |
+| `datetime` | ISO timestamp parsing |
+
+---
+
+## Project Structure
 
 ```
 data-ingestion-pipeline/
-├── project.ipynb   # Step-by-step ETL notebook (main implementation)
-└── README.md                # Project documentation
+├── github_events_etl.ipynb   # Main ETL notebook (run this)
+└── README.md
 ```
 
 ---
 
-## 🔄 Pipeline Architecture
+## Pipeline Architecture
 
-The pipeline is built progressively in the notebook across the following stages:
-
-### 1. 📡 Extraction — Fetch GitHub Events
-
-Connect to the public GitHub Events API and pull raw event data (watches, forks, pushes):
-
-```python
-import requests
-
-url = "https://api.github.com/repos/DataTalksClub/data-engineering-zoomcamp/events"
-response = requests.get(url)
-data = response.json()
+```
+GitHub REST API
+      │
+      ▼  (paginated, authenticated)
+ fetch_events()          ← generator, one page at a time
+      │
+      ▼
+ process_event()         ← flatten, parse timestamps, skip bad records
+      │
+      ▼
+ DuckDB (github_events)  ← schema evolution + ON CONFLICT DO NOTHING
 ```
 
-### 2. 🔑 Authentication
+### Key Implementation Details
 
-Use a personal access token to increase the API rate limit from 60 → 5000 requests/hour:
+**Rate Limit Handling**
+The API allows 60 unauthenticated requests/hour (5,000 with a token). The pipeline checks remaining quota before processing and sleeps 60 s when exhausted.
 
-```python
-from google.colab import userdata
+**Generator Pattern**
+`fetch_events()` yields one page at a time instead of loading all pages into a list. This keeps memory usage constant regardless of total event volume.
 
-API_TOKEN = userdata.get('github-token')
-headers = {'Authorization': f'Bearer {API_TOKEN}'}
-response = requests.get(url, headers=headers)
-```
+**Schema Evolution**
+New fields in incoming data trigger an `ALTER TABLE` automatically — the pipeline never fails on unexpected schema changes.
 
-> **Note:** Store your token securely using environment variables or a secrets manager — never hardcode it.
-
-### 3. ⏱️ Rate Limit Handling
-
-Check remaining API quota and pause execution when exhausted:
-
-```python
-remaining = requests.get("https://api.github.com/rate_limit").json()['rate']['remaining']
-
-if remaining == 0:
-    time.sleep(60)  # Wait for quota to reset before retrying
-```
-
-### 4. 📄 Pagination — Traverse All Pages
-
-The GitHub API uses **Link headers** to signal the next page URL. We follow `rel="next"` until all pages are consumed:
-
-```python
-url = "https://api.github.com/repos/DataTalksClub/data-engineering-zoomcamp/events"
-
-while True:
-    response = requests.get(url)
-    data = response.json()
-    print(len(data))
-    if 'next' not in response.links:
-        break
-    url = response.links['next']['url']
-```
-
-### 5. ⚡ Generator Pattern — Memory-Efficient Streaming
-
-Instead of collecting all pages in memory, we use a **Python generator** to yield one page at a time:
-
-```python
-def events_getter():
-    """Generator that yields one page of GitHub events at a time."""
-    url = "https://api.github.com/repos/DataTalksClub/data-engineering-zoomcamp/events"
-    while True:
-        response = requests.get(url)
-        yield response.json()
-        if 'next' not in response.links:
-            break
-        url = response.links['next']['url']
-```
-
-Usage:
-```python
-for page in events_getter():
-    print(page)  # Process each page without loading all data into memory
-```
-
-### 6. 🗄️ Loading — dlt into PostgreSQL
-
-The generator is passed directly to `dlt`, which infers the schema and loads the data:
-
-```python
-import dlt
-
-pipeline = dlt.pipeline(
-    pipeline_name="github_events",
-    destination="postgres",
-    dataset_name="github_data"
-)
-
-load_info = pipeline.run(events_getter(), table_name="events")
-print(load_info)
-```
+**Idempotency**
+`ON CONFLICT DO NOTHING` on the `id` primary key ensures the pipeline is safe to re-run without creating duplicate records.
 
 ---
 
-## ⚙️ Setup & Usage
+## Setup
 
 ### Prerequisites
 
 ```bash
-pip install requests dlt[postgres]
+pip install requests duckdb
 ```
 
-### Environment Variables
+### Authentication (Recommended)
 
-Set your GitHub personal access token:
+A GitHub personal access token raises the rate limit from **60 → 5,000 req/hr**.
 
 ```bash
 # Linux / macOS
-export GITHUB_TOKEN="your_token_here"
+export GITHUB_TOKEN="ghp_your_token_here"
 
 # Windows (PowerShell)
-$env:GITHUB_TOKEN = "your_token_here"
+$env:GITHUB_TOKEN = "ghp_your_token_here"
 ```
+
+> **Security note:** Never hardcode tokens in notebooks. Always use environment variables or a secrets manager.
 
 ### Running the Notebook
 
-1. Open `project.ipynb` in Jupyter or Google Colab.
-2. Follow cells sequentially — each section is annotated with explanations.
-3. Configure your PostgreSQL connection string in the `dlt` pipeline cell.
+1. Open `github_events_etl.ipynb` in Jupyter Lab / Notebook or VS Code.
+2. Run all cells top-to-bottom — each section is self-contained and annotated.
+3. The resulting `github_events.db` file can be queried with any DuckDB client.
 
 ---
 
-## 📚 Key Concepts Covered
+## Concepts Demonstrated
 
-- **REST API consumption** with `requests`
-- **Bearer token authentication**
-- **Pagination** using `Link` response headers
-- **Generator functions** for memory-efficient data streaming
-- **Schema inference** and automated loading with `dlt`
-- **Rate limit management** with exponential backoff
+- **REST API consumption** with `requests` and pagination via `Link` headers
+- **Bearer token authentication** and rate limit management
+- **Python generators** for memory-efficient streaming
+- **Dynamic schema inference** and SQL `ALTER TABLE` at runtime
+- **Idempotent loading** with primary-key conflict handling in DuckDB
 
 ---
 
-## 🔗 References
+## References
 
-- [GitHub REST API Docs](https://docs.github.com/en/rest)
-- [dlt Documentation](https://dlthub.com/docs)
+- [GitHub Events API](https://docs.github.com/en/rest/activity/events)
+- [DuckDB Documentation](https://duckdb.org/docs/)
 - [FreeCodeCamp Data Engineering Course](https://www.freecodecamp.org/)
